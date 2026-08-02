@@ -71,6 +71,40 @@ python3 main.py
 
 Model used: `claude-sonnet-4-5`. Change in `graph.py::_get_llm()`.
 
+## Web UI / API
+
+`server.py` wraps the same graph behind a small FastAPI app and serves a
+static frontend (`static/index.html`) from the same process — one
+deployable service, no separate frontend build/host needed.
+
+```bash
+uvicorn server:app --reload
+```
+
+Then open `http://localhost:8000` and click **Run Triage**.
+
+- `GET /api/health` — health check
+- `POST /api/run` — runs the graph against `synthetic_data.py` and
+  returns the ranked decisions as JSON (same shape as `run_output.json`)
+
+The CLI (`main.py`) still works independently for scripting/cron use.
+
+## Deploying
+
+Two deploy paths are wired up, pick whichever your host expects:
+
+- **Docker** (`Dockerfile`) — works on Render, Fly.io, Railway, AWS App
+  Runner, or any container host. Build with
+  `docker build -t campaign-triage-agent .` and run with
+  `docker run -p 8000:8000 --env-file .env campaign-triage-agent`.
+- **Buildpack** (`Procfile`) — for hosts that detect Python apps directly
+  (Railway, Heroku-style platforms) without a Dockerfile.
+
+Either way, set `ANTHROPIC_API_KEY`, `LANGCHAIN_TRACING_V2`,
+`LANGCHAIN_API_KEY`, and `LANGCHAIN_PROJECT` as environment variables /
+secrets in the hosting platform's dashboard — never commit `.env` or bake
+keys into the image (`.dockerignore` already excludes it).
+
 ## Known gaps / next steps toward production
 
 1. **No LangSmith tracing wired yet** — add `LANGCHAIN_TRACING_V2=true` +
