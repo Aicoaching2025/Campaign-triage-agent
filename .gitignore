@@ -147,6 +147,9 @@ activemq-data/
 # SageMath parsed files
 *.sage.py
 
+# Generated output
+run_output.json
+
 # Environments
 .env
 .envrc

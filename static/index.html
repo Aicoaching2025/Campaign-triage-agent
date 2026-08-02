@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Campaign Triage Agent</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --text: #1a1d23;
+    --muted: #6b7280;
+    --border: #e5e7eb;
+    --accent: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115;
+      --card: #171a21;
+      --text: #e8eaed;
+      --muted: #9aa1ac;
+      --border: #2a2e37;
+      --accent: #5b8def;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 2rem 1.5rem 1rem;
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+  .sub { color: var(--muted); font-size: 0.9rem; }
+  main { max-width: 900px; margin: 0 auto; padding: 0 1.5rem 3rem; }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin: 1.5rem 0;
+  }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 0.7rem 1.4rem;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .status { color: var(--muted); font-size: 0.9rem; }
+  .summary {
+    display: none;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+    margin-bottom: 1.25rem;
+    font-size: 0.9rem;
+    color: var(--muted);
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.1rem 1.25rem;
+    margin-bottom: 0.9rem;
+  }
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+  .badge {
+    display: inline-block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 0.25rem 0.6rem;
+    border-radius: 999px;
+    color: white;
+  }
+  .badge.scale_budget { background: #16a34a; }
+  .badge.pause { background: #dc2626; }
+  .badge.reallocate_budget { background: #d97706; }
+  .badge.hold { background: #6b7280; }
+  .badge.escalate_to_human { background: #7c3aed; }
+  .approval {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #dc2626;
+  }
+  .campaign-name { font-weight: 600; margin-top: 0.6rem; }
+  .meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
+  .rationale { margin-top: 0.55rem; font-size: 0.92rem; line-height: 1.45; }
+  .empty { color: var(--muted); padding: 2rem 0; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Campaign Triage Agent</h1>
+  <div class="sub">Ranked, rationale-backed recommendations across client campaigns.</div>
+</header>
+<main>
+  <div class="controls">
+    <button id="runBtn">Run Triage</button>
+    <span class="status" id="status"></span>
+  </div>
+  <div class="summary" id="summary"></div>
+  <div id="results"></div>
+</main>
+
+<script>
+const ACTION_LABEL = {
+  scale_budget: "Scale Budget",
+  pause: "Pause",
+  reallocate_budget: "Reallocate",
+  hold: "Hold",
+  escalate_to_human: "Escalate",
+};
+
+const runBtn = document.getElementById("runBtn");
+const statusEl = document.getElementById("status");
+const summaryEl = document.getElementById("summary");
+const resultsEl = document.getElementById("results");
+
+runBtn.addEventListener("click", async () => {
+  runBtn.disabled = true;
+  statusEl.textContent = "Running triage...";
+  summaryEl.style.display = "none";
+  resultsEl.innerHTML = "";
+
+  try {
+    const res = await fetch("/api/run", { method: "POST" });
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const data = await res.json();
+    render(data);
+    statusEl.textContent = `Done - ${data.mode === "live" ? "Live Claude API" : "rule-based fallback (no API key set)"}`;
+  } catch (err) {
+    statusEl.textContent = `Error: ${err.message}`;
+  } finally {
+    runBtn.disabled = false;
+  }
+});
+
+function render(data) {
+  const s = data.summary;
+  summaryEl.style.display = "block";
+  summaryEl.textContent =
+    `${s.campaigns_assessed} campaigns assessed | ${s.auto_actionable} auto-actionable | ` +
+    `${s.escalated} escalated for approval | ${s.held} held`;
+
+  if (!data.decisions.length) {
+    resultsEl.innerHTML = '<div class="empty">No campaigns returned.</div>';
+    return;
+  }
+
+  resultsEl.innerHTML = data.decisions.map(cardHtml).join("");
+}
+
+function cardHtml(d) {
+  const mag = d.magnitude_pct ? ` (${(d.magnitude_pct * 100).toFixed(0)}%)` : "";
+  return `
+    <div class="card">
+      <div class="card-top">
+        <span class="badge ${d.action}">${ACTION_LABEL[d.action] || d.action}${mag}</span>
+        ${d.requires_human_approval ? '<span class="approval">NEEDS HUMAN APPROVAL</span>' : ""}
+      </div>
+      <div class="campaign-name">${escapeHtml(d.campaign_name)}</div>
+      <div class="meta">Daily $ impact: $${Number(d.dollar_impact_daily).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} &middot; Confidence: ${(d.confidence * 100).toFixed(0)}%</div>
+      <div class="rationale">${escapeHtml(d.rationale)}</div>
+    </div>
+  `;
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str;
+  return div.innerHTML;
+}
+</script>
+</body>
+</html>
