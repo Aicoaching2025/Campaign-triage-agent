@@ -149,6 +149,7 @@ activemq-data/
 
 # Generated output
 run_output.json
+approvals_store.json
 
 # Environments
 .env

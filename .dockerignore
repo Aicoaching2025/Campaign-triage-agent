@@ -3,3 +3,4 @@
 __pycache__/
 *.pyc
 run_output.json
+approvals_store.json

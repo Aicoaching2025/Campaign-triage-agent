@@ -102,6 +102,30 @@
   .meta { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
   .rationale { margin-top: 0.55rem; font-size: 0.92rem; line-height: 1.45; }
   .empty { color: var(--muted); padding: 2rem 0; text-align: center; }
+  .review-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 0.85rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+  }
+  .review-btn {
+    padding: 0.4rem 0.9rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text);
+  }
+  .review-btn.approve { border-color: #16a34a; color: #16a34a; }
+  .review-btn.reject { border-color: #dc2626; color: #dc2626; }
+  .review-status {
+    font-size: 0.82rem;
+    font-weight: 600;
+  }
+  .review-status.approved { color: #16a34a; }
+  .review-status.rejected { color: #dc2626; }
 </style>
 </head>
 <body>
@@ -132,7 +156,14 @@ const statusEl = document.getElementById("status");
 const summaryEl = document.getElementById("summary");
 const resultsEl = document.getElementById("results");
 
-runBtn.addEventListener("click", async () => {
+let currentRunId = null;
+
+runBtn.addEventListener("click", () => runTriage());
+resultsEl.addEventListener("click", onResultsClick);
+
+restoreLastRun();
+
+async function runTriage() {
   runBtn.disabled = true;
   statusEl.textContent = "Running triage...";
   summaryEl.style.display = "none";
@@ -142,6 +173,8 @@ runBtn.addEventListener("click", async () => {
     const res = await fetch("/api/run", { method: "POST" });
     if (!res.ok) throw new Error(`Server returned ${res.status}`);
     const data = await res.json();
+    currentRunId = data.run_id;
+    localStorage.setItem("lastRunId", data.run_id);
     render(data);
     statusEl.textContent = `Done - ${data.mode === "live" ? "Live Claude API" : "rule-based fallback (no API key set)"}`;
   } catch (err) {
@@ -149,7 +182,42 @@ runBtn.addEventListener("click", async () => {
   } finally {
     runBtn.disabled = false;
   }
-});
+}
+
+async function restoreLastRun() {
+  const savedRunId = localStorage.getItem("lastRunId");
+  if (!savedRunId) return;
+  try {
+    const res = await fetch(`/api/runs/${savedRunId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    currentRunId = data.run_id;
+    render(data);
+    statusEl.textContent = `Showing previous run (${data.run_date})`;
+  } catch (err) {
+    /* no previous run available -- fine, just show the empty state */
+  }
+}
+
+async function onResultsClick(evt) {
+  const btn = evt.target.closest(".review-btn");
+  if (!btn) return;
+
+  const card = btn.closest(".card");
+  const campaignId = card.dataset.campaignId;
+  const verdict = btn.dataset.verdict;
+  const row = card.querySelector(".review-row");
+  row.innerHTML = '<span class="review-status">Saving...</span>';
+
+  try {
+    const res = await fetch(`/api/runs/${currentRunId}/decisions/${campaignId}/${verdict}`, { method: "POST" });
+    if (!res.ok) throw new Error(`Server returned ${res.status}`);
+    const updated = await res.json();
+    row.outerHTML = reviewRowHtml(updated);
+  } catch (err) {
+    row.innerHTML = `<span class="review-status rejected">Error: ${escapeHtml(err.message)}</span>`;
+  }
+}
 
 function render(data) {
   const s = data.summary;
@@ -169,7 +237,7 @@ function render(data) {
 function cardHtml(d) {
   const mag = d.magnitude_pct ? ` (${(d.magnitude_pct * 100).toFixed(0)}%)` : "";
   return `
-    <div class="card">
+    <div class="card" data-campaign-id="${escapeHtml(d.campaign_id)}">
       <div class="card-top">
         <span class="badge ${d.action}">${ACTION_LABEL[d.action] || d.action}${mag}</span>
         ${d.requires_human_approval ? '<span class="approval">NEEDS HUMAN APPROVAL</span>' : ""}
@@ -177,8 +245,22 @@ function cardHtml(d) {
       <div class="campaign-name">${escapeHtml(d.campaign_name)}</div>
       <div class="meta">Daily $ impact: $${Number(d.dollar_impact_daily).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} &middot; Confidence: ${(d.confidence * 100).toFixed(0)}%</div>
       <div class="rationale">${escapeHtml(d.rationale)}</div>
+      ${d.approval_status !== "n/a" ? `<div class="review-row">${reviewRowInnerHtml(d.approval_status)}</div>` : ""}
     </div>
   `;
+}
+
+function reviewRowInnerHtml(status) {
+  if (status === "approved") return '<span class="review-status approved">&#10003; Approved</span>';
+  if (status === "rejected") return '<span class="review-status rejected">&#10007; Rejected</span>';
+  return `
+    <button class="review-btn approve" data-verdict="approve">Approve</button>
+    <button class="review-btn reject" data-verdict="reject">Reject</button>
+  `;
+}
+
+function reviewRowHtml(decision) {
+  return `<div class="review-row">${reviewRowInnerHtml(decision.approval_status)}</div>`;
 }
 
 function escapeHtml(str) {
